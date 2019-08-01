@@ -1,0 +1,213 @@
+#**How to Deploy a Express Node.js app on Kubernetes and an Intro to Containerisation**
+
+![](https://cdn-images-1.medium.com/max/2600/1*RgCNLyra9rfaJdWUxh38xw.jpeg)
+
+###**Containerisation**
+
+While container technology has existed for years, Docker really took it
+mainstream. A lot of companies and developers now use containers to ship their
+apps. Docker provides an easy to use interface to work with containers.
+
+However, for any non-trivial application, you will not be deploying “one
+container”, but rather a group of containers on multiple hosts. In this article,
+we’ll take a look at [Kubernetes](https://kubernetes.io/), an open-source system
+for automating deployment, scaling, and management of containerised
+applications.
+
+###**What Problem Does Kubernetes Solve?**
+
+With Docker, you have simple commands like `docker run` or `docker stop` to start/stop a container respectively. Unlike these simple commands that let you do operations on a single container, there is no `docker deploy` command to push new images to a group of hosts.
+
+Many tools have appeared in recent times to solve this problem of “container orchestration”; popular ones being [Mesos](http://mesos.apache.org/), [Docker Swarm](https://docs.docker.com/engine/swarm/) (now part of the Docker engine), [Nomad](https://www.nomadproject.io/), and Kubernetes. All of them come with their pros and cons but, recently we have seen, Kubernetes take a considerable lead in usage and features.
+
+Kubernetes (also referred to as ‘k8s’) provides powerful abstractions that completely decouple application operations such as deployments and scaling from underlying infrastructure operations. So, with Kubernetes, you do not work with individual hosts or virtual machines on which to run you code, but rather Kubernetes sees the underlying infrastructure as a *sea of compute* on which to put containers.
+
+###**Kubernetes Concepts**
+
+Kubernetes has a client/server architecture. Kubernetes server runs on your *cluster* (a group of hosts) on which you will deploy your application. And you typically interact with the cluster using a client, such as the `kubectl` CLI.
+
+###**Pods**
+
+A pod is the basic unit that Kubernetes deals with, a group of containers. If there are two or more containers that always need to work together, and should be on the same machine, make them a `pod`.
+
+### **Node**
+
+A node is a physical or virtual machine, running Kubernetes, onto which pods can be scheduled.
+
+### **Label**
+
+A label is a key/value pair that is used to identify a resource. You could label all your `pods` serving production traffic with “role=production”, for example.
+
+### **Selector**
+
+Selections let you search/filter resources by labels. Following on from the previous example, to get all production pods your selector would be “role=production”.
+
+### **Service**
+
+A service defines a set of pods (typically selected by a “selector”) and a means by which to access them, such as single stable IP address and corresponding DNS name.
+
+### **Deploy a Express Node.js App on OKE using Kubernetes**
+
+Now, that we are aware of basic Kubernetes concepts, let’s see it in action by deploying a Node.js application on First of all, if you don’t have access to OCI, please go to [Try it | OCI](http://bit.ly/mediumq4)
+
+### **1. Install Kubernetes Client**
+
+`kubectl` is the command line interface for running commands against Kubernetes clusters. `kubectl`:
+
+
+To verify the installation run `kubectl version`.
+
+### **2. Create a Docker Image of your application**
+
+Here is the application that we’ll be working with: [express.js-hello-world](https://github.com/bmwhopper/express.js-hello-world). You can see in the [Dockerfile](https://github.com/bmwhopper/express.js-hello-world/blob/master/Dockerfile) that we are using an existing Node.js image from [dockerhub](https://hub.docker.com/).
+
+**Now, we’ll build our application image by running:**
+
+    docker build -t hello-world-image .
+
+**Run the app locally by running:**
+
+    docker run --name hello-world -p 3000:3000 hello-world-image
+
+If you visit `localhost:3000` you should get the response.
+
+### **3. Create a cluster**
+
+Now we’ll create a cluster with three nodes (virtual machines), on which we’ll deploy our application. You can do this easily using the container [container engine page](https://console.eu-frankfurt-1.oraclecloud.com/containers/clusters) in your free OCI account.
+
+The first thing you need to do for creating an OKE cluster is too give your Kubernetes access to manage resources in your tenancy.
+
+**You can do this by adding the following **[policy to your compartment](https://docs.cloud.oracle.com/iaas/Content/ContEng/Concept/contengpolicyconfig.htm)**:**
+
+    Allow service OKE to manage all-resources in tenancy
+
+You will then be able to access the OKE container console and get started creating your cluster, as below:
+
+![](https://cdn-images-1.medium.com/max/2600/1*fPkuiYF_xrP1sMsGvfce5g.png)
+
+You have **2** options when creating your cluster, “**Quick**” or “**Custom**” create:
+
+#### **Quick Create:**
+
+Allows you too quickly create a cluster with default settings, also creates a dedicated network.
+
+#### **Custom Create:**
+
+Create a cluster with custom settings, assumes an existing network.
+
+***For this you can choose whichever is more applicable for your needs, for my cluster I chose “Quick Create”.*
+
+In this tutorial we will create a cluster with 3 nodes, the master and 2 worker nodes. We are using the VM.Standard 2.1 machine type because for this app we do not need larger compute power.
+
+Once your Cluster is up and running we can connect it to`kubectl`, so that we have access to the cluster from our Kubernetes command line. You can do this by accessing the “kubeconfig: This can be downloaded from the “Getting Started” menu as seen below:
+
+![](https://cdn-images-1.medium.com/max/2600/1*noZWbFoVep65IjDco4FZNA.png)
+
+
+###**4. Upload Docker Image to Oracle Container Image Registry**
+
+So, now we have a docker image and a cluster. We want to deploy that image to our cluster and start the containers, which will serve the requests.
+
+The Oracle container image registry is a cloud registry where you can push your images and these images automatically become available to your container engine cluster. To push an image, you have to build it with a proper name.
+
+**To build the container image of this application and tag it for uploading, run the following command:**
+
+    docker tag bmwhopper/helloworld:latest <region-code>.ocir.io/<tenancy-name>/<repo-name>/<image-name>:<tag>
+
+`v1` is the *tag* of the image.
+
+**Next step is to upload the image we just built to OCIR:**
+
+    docker push <region-code>.ocir.io/<tenancy-name>/<repo-name>/<image-name>:<tag>
+
+For more detailed steps on image tagging and building see the detailed guide on [how to do this here](https://www.oracle.com/webfolder/technetwork/tutorial /obe/oci/registry/index.html).
+
+### **5. First Deployment**
+
+Now we have a cluster and an image in the cloud. Let’s deploy that image on our cluster with Kubernetes. We’ll do that by creating a `deployment` spec file. Deployments are a kubernetes resource and all kubernetes resource can be defined by a spec file. This spec file lays-out the desired state of that resource and then Kubernetes figures out how to go from the current state to the desired state.
+
+**So let’s create one for our first deployment:**
+
+![](https://cdn-images-1.medium.com/max/1600/1*OFE7T4E0L7Rr__PW5WcDSw.gif)
+
+**Deployment.yaml**
+```apiVersion: apps/v1beta1
+kind: Deployment
+metadata:
+  name: hello-world-deployment
+spec:
+  replicas: 2
+  template:
+    metadata:
+      labels: # labels to select/identify the deployment
+        app: hello-world  
+    spec:     # pod spec                  
+      containers: 
+      - name: hello-world 
+        image: hello-world-image:v1 # image we pushed
+        ports:
+        - containerPort: 3000```
+
+
+This spec file says: start two pods where each pod is defined by the given pod spec. Each pod should have one container containing the `hello-world-image:v1` we pushed.
+
+**Now, run:**
+    $ kubectl create -f deployment.yml --save-config
+
+
+You can see your deployment status by running `kubectl get deployments`. To view the pod created by the deployment, run this command: `kubectl get pods`.
+
+**You should see the running pods:**
+
+    $ kubectl get pods
+    NAME                                     READY     STATUS    RESTARTS   AGE
+    hello-world-deployment-629197995-ndmrf   1/1       Running   0          27s
+    hello-world-deployment-629197995-tlx41   1/1       Running   0          27s
+
+
+Note that we have two pods running because we set the replicas to 2 in the
+**deployment.yml** file.
+
+**To make sure that the server started, check logs by running:**
+    $ kubectl logs {pod-name}  # kubectl logs hello-world-deployment-629197995-ndmrf
+
+
+### **6. Expose the Service to Internet**
+
+Now that we have the app running on our cluster we want to expose the service to Internet, you have to put your VMs behind a load balancer. To do that we create a Kubernetes `Service`.
+
+**To do this run the following command:**
+
+    $ kubectl expose deployment hello-world-deployment --type="LoadBalancer"
+
+
+Behind the scenes, it creates a `service` object (a service is a Kubernetes resource, like a Deployment).
+
+Run `kubectl get services` to see the public IP of your service. The console output should look like this:
+
+    NAME                     CLUSTER-IP       EXTERNAL-IP      PORT(S)          AGE
+    hello-world-deployment   10.244.0.16       *.*.*.*          3000:30877/TCP   27m
+    kubernetes               10.244.240.1      <none>           443/TCP          1d
+
+
+Visit `http://<EXTERNAL-IP>:<PORT>` to access the service. You can also buy a custom domain name and make it point to this IP.
+
+### **7. Scaling Your Service**
+
+Let’s say your service starts getting more traffic and you need to spin up more instances of your application. To scale up in such a case, just edit your *deployment.yml* file and change the number of `replicas` to, say, 3 and then run `kubectl apply -f deployment.yml` and you will have three pods running in no time.
+
+### **Wrapping Up**
+
+We’ve covered a lot getting started material in this tutorial but as far as Kubernetes is concerned, this is only the tip of the iceberg. There is a lot more you can do, like scaling your services to more pods with one command, or mounting `secret` on pods for things like credentials etc. However, this should be enough to get you started. For more information please feel free to reach out on [LinkedIn](https://www.linkedin.com/in/brianbmathews/) or [Twitter](https://twitter.com/DevOps4Days?lang=en)
+
+* [Docker](https://medium.com/tag/docker?source=post)
+* [JavaScript](https://medium.com/tag/javascript?source=post)
+* [Kubernetes](https://medium.com/tag/kubernetes?source=post)
+* [DevOps](https://medium.com/tag/devops?source=post)
+* [Nodejs](https://medium.com/tag/nodejs?source=post)
+
+### [Brian Mathews](https://medium.com/@brianbmathews)
+
+Technical Consultant and Evangelist with a focus on Serverless and DevOps. Why not give Oracle Cloud a try with $300 free credits! [https://bit.ly/2KQWy6k](https://bit.ly/2KQWy6k)
+
+
